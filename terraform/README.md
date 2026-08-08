@@ -159,7 +159,7 @@ Each subnet is associated with its own route table (no shared tables), isolating
 - HTTP listener on **port 80**.
 - One target group (`aws-tfm-production-tg`) with `target_type = "instance"`; both EC2 instances are registered as targets.
 - Cross-zone load balancing is on by default for ALBs — traffic is evenly distributed to both servers.
-- `enable_deletion_protection = true` and detailed access logs configurable.
+- Deletion protection is controlled by the `enable_deletion_protection` variable (default `true`; set to `false` before `terraform destroy`) and detailed access logs configurable.
 - `enable_http2 = true`.
 
 ## 11. EC2 architecture

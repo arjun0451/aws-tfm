@@ -41,3 +41,7 @@ All notable changes to this Terraform project are documented in this file.
 - `terraform apply` executed: **44 resources created**, 0 changed, 0 destroyed.
 - Deployed VPC (`vpc-01f41ae7000998089`), ALB, 2 NAT Gateways, and two EC2 instances.
 - ALB verified serving both `server1` and `server2` responses (round-robin) and `/health.html` returning 200.
+
+### Changed (2026-08-08)
+
+- ALB deletion protection is now controlled by the `enable_deletion_protection` variable (default `true`). Set it to `false` before `terraform destroy` to avoid blocking teardown.

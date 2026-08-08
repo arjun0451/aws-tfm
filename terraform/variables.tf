@@ -57,3 +57,9 @@ variable "enable_ssm_endpoints" {
   type        = bool
   default     = true
 }
+
+variable "enable_deletion_protection" {
+  description = "Whether to enable deletion protection on the ALB. Set to false before running terraform destroy to avoid blocking teardown."
+  type        = bool
+  default     = true
+}
