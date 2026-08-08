@@ -324,7 +324,7 @@ Plan: 44 to add, 0 to change, 0 to destroy.
 
 ## 24. Terraform apply instructions
 
-> **Note:** `terraform apply` was intentionally **NOT run** in this authoring.
+> **Status:** `terraform apply` has been run successfully — **44 resources created** in `ap-southeast-1` (account `852724789858`).
 
 After you have reviewed the plan, apply with:
 
@@ -394,4 +394,4 @@ terraform destroy -auto-approve
 
 Alternative: `terraform plan -destroy` to preview the deletion, then `terraform destroy`.
 
-> `terraform apply` **was NOT run** during this project setup. No AWS resources exist yet for this module.
+> `terraform apply` **has been executed** during this project setup; the environment described above is currently live in `ap-southeast-1`.

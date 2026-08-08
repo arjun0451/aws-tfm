@@ -2,9 +2,9 @@
 
 All notable changes to this Terraform project are documented in this file.
 
-## [Unreleased]
+## [0.1.0] - 2026-08-08
 
-### Added — Initial production AWS web infrastructure (2026-08-08)
+### Added — Initial production AWS web infrastructure
 
 - **Networking**
   - Dedicated VPC `10.20.0.0/16` in `ap-southeast-1`.
@@ -27,7 +27,7 @@ All notable changes to this Terraform project are documented in this file.
   - Instance profile and role policy attachment.
 - **SSM**
   - Optional VPC interface endpoints (`ssm`, `ssmmessages`, `ec2messages`) for private-only management, enabled by default.
-- **web servers**
+- **Web servers**
   - `user-data/server1.sh` serves **"Hello from server1"**.
   - `user-data/server2.sh` serves **"Hello from server2"**.
   - Httpd auto-started on boot via cloud-init; `/health.html` endpoint for ALB health checks.
@@ -36,7 +36,8 @@ All notable changes to this Terraform project are documented in this file.
 - **Ops**
   - `terraform.tfvars.example`, `.gitignore`, pinned provider `~> 6.0`, pinned Terraform `>= 1.5`.
 
-### Not done
+### Applied (2026-08-08)
 
-- `terraform apply` has **not** been executed.
-- No AWS resources created by this repository.
+- `terraform apply` executed: **44 resources created**, 0 changed, 0 destroyed.
+- Deployed VPC (`vpc-01f41ae7000998089`), ALB, 2 NAT Gateways, and two EC2 instances.
+- ALB verified serving both `server1` and `server2` responses (round-robin) and `/health.html` returning 200.
