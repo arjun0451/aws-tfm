@@ -1,9 +1,9 @@
 # aws-tfm — Production-Style AWS Web Infrastructure (Terraform)
 
-![Terraform License](https://img.shields.io/badge/terraform-1.5%2B-blueviolet)
+![Terraform License](https://img.shields.io/badge/terraform-1.20%2B-blueviolet)
 ![AWS Provider](https://img.shields.io/badge/aws-%3E%3D%206.0-orange)
 
-Terraform project that provisions a **production-style, highly available web application architecture** in the Singapore region (`ap-southeast-1`) across two Availability Zones. The stack uses an internet-facing Application Load Balancer (ALB) in public subnets, two private EC2 web servers behind it, and one NAT Gateway per AZ for outbound internet access.
+Terraform project that provisions a **production-style, highly available web application architecture** in the Singapore region (`ap-southeast-1`) across two Availability Zones. The stack uses a internet-facing Application Load Balancer (ALB) in public subnets, two private EC2 web servers behind it, and one NAT Gateway per subnets for outbound internet access.
 
 > **Important:** This project is intentionally self-contained under `terraform/` and does **not** touch unrelated files at the repository root.
 
@@ -49,11 +49,13 @@ Terraform project that provisions a **production-style, highly available web app
 The design follows AWS Well-Architected best practices for a small, internet-facing web application:
 
 - A dedicated VPC (`10.20.0.0/17`) spans **two Availability Zones** (`ap-southeast-1a`, `ap-southeast-1b`).
-- **Public subnets** host the ALB and the NAT Gateways — the only resources reachable from the internet.
+- **Public route subnets** host the ALB and the NAT Gateways — the only resources reachable in the gateways.
 - **Private application subnets** host the EC2 web servers (`server1`, `server2`). They have **no public IPs** and are not directly reachable from the internet.
 - The **ALB** is internet-facing, listens on HTTP/80 and forwards traffic round-robin to both instances.
 - Each AZ has its own **NAT Gateway** so private instances can reach the internet (e.g. package updates, SSM) while remaining unreachable inbound.
 - Traffic flow: `Internet → ALB (public subnet) → EC2 (private subnet)`. No EC2 instance is ever exposed publicly.
+
+Key security group flow: ALB allows TCP/80 from `0.0.0.0/0` and only routes to instance private IPs; web SG allows HTTP from the ALB SG, and SSH is not exposed at the ingress. Management is via SSM.
 
 ## 2. Architecture diagram (Mermaid)
 
@@ -65,7 +67,7 @@ flowchart TD
     User -. HTTP :80 .-> ALB{{Application<br/>Load Balancer<br/>ap-southeast-1}}
     ALB --> ALBSG[ALB Security Group<br/>Inbound TCP 80 0.0.0.0/0]
 
-    subgraph VPC[VPC 10.20.0.0/16]
+    subgraph VPC[VPC 10.0.0.0/17]
         subgraph PublicSubnets[Public Subnets]
             NATGW1[NAT Gateway AZ-a]
             NATGW2[NAT Gateway AZ-b]
@@ -73,156 +75,135 @@ flowchart TD
         end
 
         subgraph PrivateSubnets[Private Subnets]
-            EC2A[EC2 server1<br/>10.20.21.x]
-            EC2B[EC2 server2<br/>10.20.22.x]
+            EC21[EC2 server1<br/>10.0.21.x]
+            EC22[EC2 server2<br/>10.0.22.x]
         end
 
         IGW[IGW]
 
-        ALBSG --"TCP 80"--> EC2
+        ALBSG --"TCP 80"--> EC21
+        ALBSG --"TCP 80"--> EC22
 
-        EC2 -->|0.0.0.0/0| NATGW1
-        NATGW1 --- IGW
-        NATGW2 --- IGW
+        EC21 --> NATGW1
+        EC22 --> NATGW2
+        NATGW1 --> IGW
+        NATGW2 --> IGW
     end
 
     ALB --- IGW
-    ALBSG --"Target group: instance"--> EC2
+    NATGW1 --- IGW
+    NATGW2 --- IGW
+```
 ```
 
-> A full, detailed diagram with resource-level detail is available in [ARCHITECTURE.md](ARCHITECTURE.md).
+> A full, detailed architecture with resource-level detail is available in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## 3. AWS region and AZ design
 
 - **Region:** `ap-southeast-1` (Singapore).
-- **AZs:** `ap-southeast-1a` and `ap-southeast-1b` (two of the three AZs in the region).
-- Both public and private subnets are spread across the same two AZs for symmetry.
+- **AZs:** `ap-southeast-1`a` and `ap-southeast-1b` (two of the three AZs in the region).
 
 ## 4. VPC CIDR design
 
-- VPC: **`10.20.0.0/16`**.
-- `enable_dns_hostnames = true` and `enable_dns_support = true`.
+- VPC CIDR: **`10.0.0.0/17`**.
+- Enabled features: `enable_dns_hostnames = true` and `enable_dns_support = true`.
 - Subnet CIDRs are derived from the VPC CIDR via `cidrsubnet()`:
 
 | Purpose | CIDR | AZ |
-|---------|------|----|
-| Public subnet 1 | `10.20.1.0/24` | ap-southeast-1a |
-| Public subnet 2 | `10.20.2.0/24` | ap-southeast-1b |
-| Private app subnet 1 | `10.20.21.0/24` | ap-southeast-1a |
-| Private app subnet 2 | `10.20.22.0/24` | ap-southeast-1b |
+|---|---|---|
+| Public subnet 1 | `10.0.1.0/24` | ap-southeast-1a |
+| Public subnet 2 | `10.0.2.0/24` | ap-southeast-1b |
+| Private app subnet 1 | `10.0.21.0/24` | ap-southeast-1a |
+| Private app subnet 2 | `10.0.22.0/24` | ap-southeast-1b |
 
 ## 5. Public subnet design
 
-- Two public subnets, one per AZ (`10.20.1.0/24`, `10.20.2.0/24`).
+- Two public subnets in different AZs (`10.0.1.0/24` and `10.0.2.0/24`).
 - `map_public_ip_on_launch = true`.
-- Public subnets host only the ALB and NAT Gateways. **EC2 instances are deployed in private subnets only.**
+- Only the ALB and NAT Gateways are deployed in the public subnets. **EC2 is in the private subnets.**
 
 ## 6. Private subnet design
 
-- Two private application subnets, one per AZ (`10.20.21.0/24`, `10.20.22.0/24`).
-- `map_public_ip_on_launch = false`; instances get private IPs only.
+- Two private subnets in different AZs (`10.0.21.0/24` and `10.0.22.0/24`).
+- No `map_public_ip_on_launch`; instances get private IPs only.
 
 ## 7. NAT Gateway design
 
-- **One NAT Gateway per AZ** for high availability.
-- Each has its own Elastic IP (`domain = "vpc"`).
-- Each NAT Gateway lives in the *public* subnet of the same AZ.
-- Each private route table has a `0.0.0.0/0` route to the NAT Gateway **in the same AZ**.
+- One NAT Gateway per AZ for high availability.
+- One Elastic IP per NAT Gateway.
+- Each NAT GW is placed in the public subnet of the *same* AZ.
 
 ## 8. Internet Gateway
 
 - A single `aws_internet_gateway` attached to the VPC.
-- Public route tables point `0.0.0.0/0` at the IGW.
-- NAT Gateways require the IGW to exist first, enforced with `depends_on`.
+- Provides the default gateway for the public route tables.
+- Requires the IGW to be created before the NAT GWs (["depends_on"]).
 
 ## 9. Route tables
 
-| Route table | Target | Used by |
-| --- | --- | --- |
-| `rtb-public-1` | `0.0.0.0/0 → IGW` | `subnet public-1` |
-| `rtb-public-2` | `0.0.0.0/0 → IGW` | `subnet public-2` |
-| `rtb-private-1` | `0.0.0.0/0 → NAT-1 (AZ-a)` | `subnet private-1` |
-| `rtb-private-2` | `0.0.0.0/0 → NAT-2 (AZ-b)` | `subnet private-2` |
-
-Each subnet is associated with its own route table.
+| Route table | Target | Used for |
+|---|---|---|
+| `route public` | `0.0.0.0/0` → IGW (via IGW) | public subnet(s) |
+| `route private` | `0.0.0.0/0` → NAT GW | private subnet(s) |
 
 ## 10. ALB architecture
 
-- One **internet-facing Application Load Balancer** (`internal = false`).
-- Attached to both public subnets.
-- HTTP listener on port 80.
-- One target group with `target_type = "instance"`; both EC2 instances registered.
-- `enable_deletion_protection = true` and `enable_http2 = true`.
+- Internet-facing ALB (`internal = false`).
+- Listener: HTTP:80.
+- Target group: `instance` type with health check on `/health.html`.
+- Both instances registered in the target;
+- Reduces to 2 targets — the ALB evenly distributes with health
 
 ## 11. EC2 architecture
 
-- **Two EC2 instances** (`t3.micro` by default), `server1` and `server2`.
-- Launched **only in private subnets**, `associate_public_ip_address = false`.
-- **Amazon Linux 2023** AMI resolved dynamically via SSM parameter.
-- Encrypted `gp3` root volume (20 GiB).
-- IAM instance profile with `AmazonSSMManagedInstanceCore` (SSM Session Manager ready).
-- IMDSv2 enforced (`http_tokens = required`).
-- `user_data_replace_on_change = true` for script updates.
+- **Two EC2 instances** (`t3.micro` default) named `server1` and `server2`.
+- Launched in private subnets, no public IP.
+- Amazon Linux 3 AMI (SSM parameter resolves the latest x86_64).
+- Uses encrypted EBS root (gp3) volumes.
+- Fully IAM instance profile for SSM access.
 
-The traffic flow is: `Internet → ALB (public subnet) → EC2 (private subnet)`.
+## 12. IAM & SSM access
 
-## 12. Security-group flow
+- An IAM instance profile gives the EC2 instances permission for `AmazonSSMManagedInstanceCore`.
+- `terraform init` generated the managed instance core
+- Recommended way: SSM Session Manager (`aws ssm start-session --target <instance>`)
 
-VPC security group rules:
+The EC2 SG only allows HTTP traffic from the ALB SG or from the lock; Port 22 not opened / only via SSM **not open to the internet**.
 
-| Security group | Ingress | Egress |
-| --- | --- | --- |
-| `alb-sg` | TCP 80 from `0.0.0.0/0` | TCP 80 to VPC `10.20.0.0/16` |
-| `web-sg` (EC2) | TCP 80 only from `alb-sg` (SG reference) | 443 & 80 outbound for updates + SSM |
-| `vpc-endpoints-sg` | TCP 443 from `web-sg` | — |
+## 13. Insecure secrets handling
 
-- HTTP from the internet reaches only the ALB. EC2 SG does not allow any internet CIDR inbound.
-- **SSH (port 22) is never opened anywhere.** Administration is via SSM Session Manager.
-
-## 13. SSH/access access design
-
-- **Recommended:** SSM Session Manager.
-- The instances carry an instance profile granting `AmazonSSMManagedInstanceCore`; the SSM agent runs natively on Amazon Linux 3.
-- SSM traffic goes outbound 443 (NAT) — or through **VPC interface endpoints** (`ssm`, `ssmmessages`, `ec2messages`) when `enable_ssm_endpoints = true` (default).
-- Connect:
-  ```bash
-  aws ssm start-session --target <instance-id> --region ap-southeast-1
-  ```
-- **Alternative (not provisioned here):** a bastion host approach in the public subnet.
-- If `key_name` is provided, it enables SSH log in via the SSM shell — it does **not** expose port 22.
+The unsecure open SSM port is not enabled; no data is stored on instance.
 
 ## 14. Server1 / server2 behavior
 
-Both servers run the same lightweight web server (Apache `httpd`) configured through cloud-init:
-
 | Server | Response |
-| --- | --- |
-| `server1` | `"Hello from server1"` |
-| `server2` | `"Hello from server2"` |
+|---|---|
+| server1 | `"Hello from server1"` |
+| server2 | `"Hello from server2"` |
 
-The web server is `systemd`-enabled and auto-starts on boot.
-A `/health.html` endpoint returns `200 OK` for the ALB health check.
+The two servers run `httpd` with a simple `<!--sidecar . */ -->`.
 
 ## 15. Health checks
 
-- Also executes on the target group: protocol `HTTP`, path `/health.html`, port `traffic-port`.
-- Interval `2m`, healthy threshold `2`, unhealthy threshold `3`, matcher `200`.
-- Automatic target registration; unhealthy targets are deregistered and drained.
+- Target group health check:
+  - Path: `/health.html`
+  - Interval: `timeout` 5s
+  - Residential threshold: 2
+  - Matcher: `200`.
+Use `/health.html` from each host after boot.
 
 ## 16. High-availability considerations
 
-Fully resilient to a single-AZ outage:
+- Two instances in two AZs — those water service can survive an AZ loss.
+- ALB appears health via the target group and route to healthy targets.
 
-- 2 public + 2 private subnets, one per AZ.
-- ALB in both public subnets; DNS-based traffic distribution.
-- Two NAT gateways (one per AZ).
-- Web servers in both AZs; health checks fail over to the surviving target.
+**Remaining single points of failure / limitations:**
 
-**Remaining limitations:**
-
-- Auto-scaling is not configured (fixed instance count).
-- Stateful layer (database) is not in scope.
-- EIP recovery requires re-allocating if the NAT Gateway is replaced.
+- No ASG — a fix count of two instances.
+- Native auto-healing (self-healing) via ASGF not configured.
+- Region-level outage still down entire region (no DR).
+- Single ALB per region.
+- No database or stateful component in this repo.
 
 ## 17. Terraform project structure
 
@@ -230,132 +211,73 @@ Fully resilient to a single-AZ outage:
 terraform/
 ├── versions.tf          # Terraform += 1.5, AWS provider ~> 6.0
 ├── provider.tf         # AWS provider + common tags
-├── variables.tf         # All environment-dependant values
-├── locals.tf            # CIDR math, names, tags
+├── variables.tf        # All environment-dependant values
+├── locals.tf           # CIDR
 ├── networking.tf        # VPC, subnets, IGW, route tables
-├── security.tf          # ALB & EC2 security groups
-├── nat.tf               # EIPs + NAT gateways
-├── iam.tf              # IAM role, policy, instance profile for SSM
-├── alb.tf              # ALB, listener, target group, attachments
-├── ec2.tf              # Two private EC2 instances, AMI
-├── endpoints.tf        # VPC interface endpoints (SSM) — optional
-├── outputs.tf         # Useful post-apply values
-├── terraform.tfvars.example
-├── .gitignore
+├── security.tf         # Security groups
+├── nat.tf              # NAT Gateways
+├── iam.tf              # IAM role for SSM
+├── alb.tf              # ALB, listener, target group
+├── ec2.tf              # web servers
+├── outputs.tf
 ├── user-data/
 │   ├── server1.sh
 │   └── server2.sh
+├── .gitignore
+├── terraform.tfvars.example
 ├── ARCHITECTURE.md
 ├── CHANGELOG.md
 └── README.md
 ```
 
-Note: `terraform/` is fully self-contained and does not depend on the root files.
-
 ## 18. Prerequisites
 
-- Terraform `>= 1.5` (<https://developer.hashicorp.com/terraform/downloads>)
-- AWS CLI `>= 2.x` configured
-- Admin IAM permissions for: VPC, EC2, ELB, NAT, EIP, security groups, IAM roles, SSM (for endpoints)
+- Terraform >= 1.5 installed. AWS CLI. Admin IAM access.
+- The account should have access to create resources.
 
-## 19. AWS authentication requirements
-
-```bash
-AWS_PROFILE=production terraform plan
-```
-
-And the default AWS credential chain (environment, shared config/credentials, SSO) is used — no secrets are stored in the repo.
-
-## 20. Terraform installation
+## 20. Terraform initialization
 
 ```bash
-pip install -U azure-cli
-```
-
-…or follow the official installation guide before running `terraform init`.
-
-## 21. Terraform initialization
-
-```bash
-cd terraform
 terraform init
 ```
 
-Download the AWS provider and create the lock file. The provider version is pinned to `~> 6.0`.
-
-## 22. Terraform validation
+## 21. Terraform validation
 
 ```bash
+tfenv install 1.15.8
+tfenv use 1.15.8
 terraform fmt -recursive
 terraform validate
 ```
 
-Both command should succeed before planning.
-
-## 23. Terraform plan
+## 22. Terraform plan
 
 ```bash
-cd terraform
-AWS_PROFILE=default terraform plan -out=tfplan
+terraform plan -out=tfplan
 ```
 
-This only **reads** AWS state and prints what would be created; it creates nothing.
+## 23. Terraform apply instructions
 
-## 24. Terraform apply instructions
+> **Note:** `apply` was intentionally **NOT performed**.
 
-> **Note:** `terraform apply` was intentionally **NOT run** in this authoring.
-
-After you reviewed the plan, apply with:
-
-```bash
-terraform apply tfplan
+```bash	erraform apply terraform.tfplan   # optional -auto-approve
 ```
-
-This creates the resources defined in the plan and enter AWS. (open the state in `terraform.tfstate`, or configure remote backend).
-
-## 25. How to test the ALB after deployment
-
-```bash
-terraform output alb_dns_name
-curl "http://$(terraform output -raw alb_dns_name)/"
-```
-
-## 26. Expected responses
-
-| Curl | Response |
-| --- | --- |
-| `curl http://<alb-dns>/` | `Hello from server1` (or `server2`, round-robin) |
-| `curl http://<alb-dns>/health.html` | `200 OK` |
 
 ## 27. Troubleshooting
 
-| Symptom | Likely fix |
-| --- | --- |
-| health checks failing | Confirm the AMI lineage; verify SSM; `sudo journalctl -u cloud-init` to check startup logs |
-| SSM connection denied | Re-check instance profile attachment and SG rules |
-| ALB DNS slowly not resolving | Wait for DNS + digest; check target group health |
+| Scenario | Likely cause |
+|---|---|
+| EC2 unreachable | Check the SSH key, the AMI user, the security group rules |
+| ALB returns 503 | Verify health check path + that httpd is running |
+| Terraform apply timeout | NAT can't resolve internet (IGW/route) or insufficient arguments |
+| AWS EC2's request | IAM permissions or endpoint needed |
 
-The full troubleshooting guide is in the README.
+## 29. Cost considerations
 
-## 28. Cost considerations
-
-| Item | Approx / month |
-| --- | --- |
-| 2 × `t3.micro` | ~$22 |
-| 2 × NAT Gateway | ~$84 (dominant) |
-| ALB | ~$18-25 + LCU |
-| SSM endpoints × 3 | ~$15 |
-| EIPs, logs | ~$2-5 |
-
-Expected **~$120–135/month** steady-state. Costs can be reduced by dropping one NAT and using SSM without endpoints.
-
-## 29.. Security considerations
-
-- No secrets embedded; key pairs & credentials stay outside Terraform state.
-- Network: private instances, HTTP only via ALB SG.
-- Secure defaults: IMDSv2-only, EBS encrypted, pinned provider, SSM interface endpoints.
-- SSM as primary admin path (no SSH exposure).
-- IAM least privilege
+- 2 × t3.micro — about ~$22/month
+- **2 × NAT Gateway — around ~$84/month (dominant)**/ (-t2micro)
+- 2 × Elastic IP — free when attached
+- ALB — ~$0.025/hr (base)
 
 ## 30. Cleanup / terminate
 
@@ -363,4 +285,6 @@ Expected **~$120–135/month** steady-state. Costs can be reduced by dropping on
 terraform destroy -auto-approve
 ```
 
-> This removes the whole environment; `destroal` irreversible. A backup/state must be kept if needed.
+> Removes everything created by the `apply`. Ensure you have a backup of state and any data before destroy.
+
+__Full, up-to-date instructions are in `Architecture.md`/docs._
