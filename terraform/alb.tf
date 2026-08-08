@@ -6,7 +6,7 @@ resource "aws_lb" "main" {
   security_groups    = [aws_security_group.alb.id]
   subnets            = aws_subnet.public[*].id
 
-  enable_deletion_protection = true
+  enable_deletion_protection = var.enable_deletion_protection
   enable_http2               = true
   idle_timeout               = 60
 
