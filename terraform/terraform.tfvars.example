@@ -1,0 +1,17 @@
+# Copy this file to terraform.tfvars and adjust values as needed.
+# terraform.tfvars must never be committed - it may contain secrets.
+
+region             = "ap-southeast-1"
+project_name       = "aws-tfm"
+environment        = "production"
+
+vpc_cidr           = "10.20.0.0/16"
+az_count           = 2
+
+instance_type      = "t3.micro"
+key_name           = "opentlc_admin_backdoor" # optional, comment out to skip key pair
+
+web_port            = 80
+health_check_path   = "/health.html"
+
+enable_ssm_endpoints = true
